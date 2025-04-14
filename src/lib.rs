@@ -11,7 +11,7 @@
 //! cache once a str slice has been interned. This library is not intended for
 //! long running programs.
 
-use bimap::BiMap;
+use bimap::BiHashMap;
 use core::{
   num::NonZeroUsize,
   sync::atomic::{AtomicUsize, Ordering},
@@ -21,9 +21,15 @@ use std::sync::{OnceLock, PoisonError, RwLock};
 /// An easier name to type because you don't have to use non-letter characters.
 pub type StaticStr = &'static str;
 
+#[cfg(not(feature = "fnv"))]
+type BiMap = BiHashMap<StrID, StaticStr>;
+#[cfg(feature = "fnv")]
+type BiMap =
+  BiHashMap<StrID, StaticStr, fnv::FnvBuildHasher, fnv::FnvBuildHasher>;
+
 static NEXT_STR_ID: AtomicUsize = AtomicUsize::new(1);
 
-static STR_CACHE: OnceLock<RwLock<BiMap<StrID, StaticStr>>> = OnceLock::new();
+static STR_CACHE: OnceLock<RwLock<BiMap>> = OnceLock::new();
 
 /// This is a newtype over a [NonZeroUsize] which can get back the str slice
 /// used to obtain this ID.
@@ -53,7 +59,7 @@ impl StrID {
   #[inline]
   #[must_use]
   pub fn as_str(self) -> StaticStr {
-    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::new()));
+    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::default()));
     let read = rw_lock.read().unwrap_or_else(PoisonError::into_inner);
     read.get_by_left(&self).unwrap_or(&"")
   }
@@ -77,7 +83,7 @@ impl<'a> From<Box<str>> for StrID {
   #[inline]
   fn from(value: Box<str>) -> Self {
     let s: &str = &*value;
-    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::new()));
+    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::default()));
     let read = rw_lock.read().unwrap_or_else(PoisonError::into_inner);
     if let Some(id) = read.get_by_right(s) {
       *id
@@ -103,7 +109,7 @@ impl<'a> From<&'a str> for StrID {
   fn from(s: &'a str) -> Self {
     // essentially the same as the `Box<str>` version, just that we have to box
     // the data if it does have to be inserted into the cache.
-    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::new()));
+    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::default()));
     let read = rw_lock.read().unwrap_or_else(PoisonError::into_inner);
     if let Some(id) = read.get_by_right(&s) {
       *id
@@ -128,7 +134,7 @@ impl From<String> for StrID {
     // essentially the same as the `Box<str>` version, just that we have to
     // convert String into Box<str> the data if it does have to be inserted into
     // the cache (which might be free or it might be a reallocation).
-    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::new()));
+    let rw_lock = STR_CACHE.get_or_init(|| RwLock::new(BiMap::default()));
     let read = rw_lock.read().unwrap_or_else(PoisonError::into_inner);
     if let Some(id) = read.get_by_right(s.as_str()) {
       *id
